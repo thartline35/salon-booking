@@ -1,95 +1,102 @@
-import React, { useState, useEffect } from 'react';
-import { db } from '../firebase';
-import { collection, getDocs, addDoc, query, where } from 'firebase/firestore';
-import ServiceSelector from './ServiceSelector';
-import { format } from 'date-fns';
-import { SERVICES } from '../data/services';
-import { 
+import React, { useState, useEffect } from "react";
+import { db } from "../firebase";
+import { collection, addDoc, query, where, getDocs } from "firebase/firestore";
+import ServiceSelector from "./ServiceSelector";
+import { format } from "date-fns";
+import {
   STYLISTS,
   generateTimeSlots,
-  generateAvailableTimes, 
-  findServiceCategory,
-  findServiceDetails,
-  checkDayAvailability
-} from '../utils/appointmentUtils';
-
-// Phone Input Component
-const PhoneInput = ({ value, onChange }) => {
-  const formatPhoneNumber = (input) => {
-    const numbers = input.replace(/\D/g, '');
-    if (numbers.length <= 3) return numbers;
-    if (numbers.length <= 6) return `${numbers.slice(0, 3)}-${numbers.slice(3)}`;
-    return `${numbers.slice(0, 3)}-${numbers.slice(3, 6)}-${numbers.slice(6, 10)}`;
-  };
-
-  const handleChange = (e) => {
-    const formattedNumber = formatPhoneNumber(e.target.value);
-    onChange(formattedNumber);
-  };
-
-  const handleKeyDown = (e) => {
-    if (
-      e.key === 'Backspace' ||
-      e.key === 'Delete' ||
-      e.key === 'Tab' ||
-      e.key === 'Escape' ||
-      e.key === 'Enter' ||
-      /^[0-9]$/.test(e.key)
-    ) {
-      return;
-    }
-    e.preventDefault();
-  };
-
-  return (
-    <input
-      type="tel"
-      value={value}
-      onChange={handleChange}
-      onKeyDown={handleKeyDown}
-      className="w-full p-2 border rounded"
-      placeholder="123-456-7890"
-      maxLength="12"
-      required
-    />
-  );
-};
+  updateStylistAvailability,
+} from "../utils/appointmentUtils";
 
 const BookingForm = () => {
-  const [selectedStylist, setSelectedStylist] = useState('');
+  const [selectedStylist, setSelectedStylist] = useState("");
   const [selectedService, setSelectedService] = useState(null);
-  const [selectedDate, setSelectedDate] = useState('');
-  const [selectedTime, setSelectedTime] = useState('');
-  const [customerName, setCustomerName] = useState('');
-  const [customerPhone, setCustomerPhone] = useState('');
-  const [availabilityStatus, setAvailabilityStatus] = useState(null);
+  const [selectedDate, setSelectedDate] = useState("");
+  const [selectedTime, setSelectedTime] = useState("");
+  const [customerName, setCustomerName] = useState("");
+  const [customerPhone, setCustomerPhone] = useState("");
+  const [availableTimeSlots, setAvailableTimeSlots] = useState([]);
 
-  useEffect(() => {
-    const checkAvailability = async () => {
-      if (!selectedDate || !selectedService) {
-        setAvailabilityStatus(null);
-        return;
+  // Handle service selection
+  const handleServiceSelect = (service) => {
+    setSelectedService(service);
+    // Reset time if service changes
+    setSelectedTime("");
+  };
+
+  // Auto-assign stylist based on availability
+  const findAvailableStylist = async (date, time) => {
+    for (const stylist of STYLISTS) {
+      const appointmentsRef = collection(db, "appointments");
+      const q = query(
+        appointmentsRef,
+        where("stylistId", "==", stylist.id),
+        where("date", "==", date),
+        where("time", "==", time)
+      );
+      
+      const querySnapshot = await getDocs(q);
+      if (querySnapshot.empty) {
+        return stylist.id;
       }
-  
-      try {
-        const availability = await generateAvailableTimes(selectedDate, selectedService, db);
-        console.log('Generated Availability:', availability);
-        setAvailabilityStatus(availability);
-      } catch (error) {
-        console.error('Error checking availability:', error);
-        setAvailabilityStatus(null);
+    }
+    return null;
+  };
+
+  // Generate time slots whenever date or service changes
+  useEffect(() => {
+    const loadTimeSlots = async () => {
+      if (selectedDate && selectedService) {
+        try {
+          const slots = generateTimeSlots(selectedService.duration, selectedDate);
+          setAvailableTimeSlots(slots);
+          
+          // If stylist isn't selected, check each time slot for availability
+          if (!selectedStylist) {
+            const availableSlots = [];
+            for (const slot of slots) {
+              const hasAvailableStylist = await findAvailableStylist(selectedDate, slot);
+              if (hasAvailableStylist) {
+                availableSlots.push(slot);
+              }
+            }
+            setAvailableTimeSlots(availableSlots);
+          }
+        } catch (error) {
+          console.error("Error loading time slots:", error);
+          setAvailableTimeSlots([]);
+        }
       }
     };
-  
-    checkAvailability();
-  }, [selectedDate, selectedService]);
+
+    loadTimeSlots();
+  }, [selectedDate, selectedService, selectedStylist]);
+
+  // Auto-assign stylist when time is selected
+  useEffect(() => {
+    const assignStylist = async () => {
+      if (selectedTime && !selectedStylist) {
+        const availableStylistId = await findAvailableStylist(selectedDate, selectedTime);
+        if (availableStylistId) {
+          setSelectedStylist(availableStylistId);
+        }
+      }
+    };
+
+    assignStylist();
+  }, [selectedTime, selectedDate]);
+
+  const validatePhoneNumber = (phone) => {
+    const numbersOnly = phone.replace(/\D/g, "");
+    return numbersOnly.length === 10;
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
-    const numbersOnly = customerPhone.replace(/\D/g, '');
-    if (numbersOnly.length !== 10) {
-      alert('Please enter a valid 10-digit phone number');
+
+    if (!validatePhoneNumber(customerPhone)) {
+      alert("Please enter a valid 10-digit phone number");
       return;
     }
 
@@ -102,42 +109,51 @@ const BookingForm = () => {
         date: selectedDate,
         time: selectedTime,
         customerName,
-        customerPhone: numbersOnly,
-        status: 'scheduled',
-        createdAt: new Date()
+        customerPhone: customerPhone.replace(/\D/g, ""),
+        status: "scheduled",
+        createdAt: new Date(),
       };
 
-      await addDoc(collection(db, 'appointments'), appointment);
-      alert('Appointment booked successfully!');
-      
-      // Reset form
-      setSelectedStylist('');
-      setSelectedService(null);
-      setSelectedDate('');
-      setSelectedTime('');
-      setCustomerName('');
-      setCustomerPhone('');
+      const docRef = await addDoc(collection(db, "appointments"), appointment);
+
+      if (docRef.id) {
+        await updateStylistAvailability(
+          selectedStylist,
+          selectedDate,
+          selectedTime,
+          db
+        );
+        alert("Appointment booked successfully!");
+
+        // Reset form
+        setSelectedStylist("");
+        setSelectedService(null);
+        setSelectedDate("");
+        setSelectedTime("");
+        setCustomerName("");
+        setCustomerPhone("");
+      }
     } catch (error) {
-      console.error('Error booking appointment:', error);
-      alert('Error booking appointment. Please try again.');
+      console.error("Error booking appointment:", error);
+      alert("Error booking appointment. Please try again.");
     }
   };
 
   return (
     <div className="max-w-4xl mx-auto p-6">
       <h2 className="text-2xl font-bold mb-6">Book an Appointment</h2>
-      
+
       <form onSubmit={handleSubmit} className="space-y-6">
-        {/* Stylist Selection */}
+        {/* Stylist Selection (Optional) */}
         <div>
-          <label className="block text-sm font-medium mb-2">Choose Stylist</label>
+          <label className="block text-sm font-medium mb-2">Choose Stylist (Optional)</label>
           <select
             value={selectedStylist}
             onChange={(e) => setSelectedStylist(e.target.value)}
             className="w-full p-2 border rounded"
           >
-            <option value="">Select a stylist (optional)</option>
-            {STYLISTS.map(stylist => (
+            <option value="">Any Available Stylist</option>
+            {STYLISTS.map((stylist) => (
               <option key={stylist.id} value={stylist.id}>
                 {stylist.name}
               </option>
@@ -148,13 +164,13 @@ const BookingForm = () => {
         {/* Service Selection */}
         <div>
           <label className="block text-sm font-medium mb-2">Choose Service</label>
-          <ServiceSelector onServiceSelect={setSelectedService} />
+          <ServiceSelector onServiceSelect={handleServiceSelect} />
         </div>
 
+        {/* Display Selected Service Details */}
         {selectedService && (
           <div className="bg-gray-50 p-4 rounded">
             <p className="font-medium">Selected: {selectedService.name}</p>
-            <p>Category: {findServiceCategory(SERVICES, selectedService.id)}</p>
             <p>Duration: {selectedService.duration} minutes</p>
             <p>Price: ${selectedService.price}{selectedService.variablePricing ? '+' : ''}</p>
             {selectedService.note && (
@@ -169,60 +185,28 @@ const BookingForm = () => {
           <input
             type="date"
             value={selectedDate}
-            onChange={(e) => {
-              const date = e.target.value;
-              setSelectedDate(date);
-              setSelectedTime(''); // Reset time when date changes
-            }}
-            min={format(new Date(), 'yyyy-MM-dd')}
+            onChange={(e) => setSelectedDate(e.target.value)}
+            min={format(new Date(), "yyyy-MM-dd")}
             className="w-full p-2 border rounded"
             required
           />
         </div>
 
-        {/* Availability Information */}
-        {selectedDate && selectedService && availabilityStatus && (
-          <div className={`p-4 rounded ${
-            availabilityStatus.status.isOpen 
-              ? 'bg-green-50 text-green-800' 
-              : 'bg-red-50 text-red-800'
-          }`}>
-            {!availabilityStatus.status.isOpen ? (
-              <p>{availabilityStatus.status.message}</p>
-            ) : (
-              <>
-                <p>{availabilityStatus.status.message}</p>
-                <p>
-                  Available Slots: {availabilityStatus.status.availableSlots} 
-                  / {availabilityStatus.status.totalSlots}
-                </p>
-              </>
-            )}
-          </div>
-        )}
-
         {/* Time Selection */}
-        {selectedDate && selectedService && availabilityStatus?.status.isOpen && (
-          <div>
-            <label className="block text-sm font-medium mb-2">Choose Time</label>
-            <select
-              value={selectedTime}
-              onChange={(e) => setSelectedTime(e.target.value)}
-              className="w-full p-2 border rounded"
-              required
-            >
-              <option value="">Select a time</option>
-              {availabilityStatus.availableTimes.map(time => (
-                <option key={time} value={time}>{time}</option>
-              ))}
-            </select>
-            {availabilityStatus.availableTimes.length === 0 && (
-              <p className="text-red-500 text-sm mt-1">
-                No available time slots for this date
-              </p>
-            )}
-          </div>
-        )}
+        <div>
+          <label className="block text-sm font-medium mb-2">Choose Time</label>
+          <select
+            value={selectedTime}
+            onChange={(e) => setSelectedTime(e.target.value)}
+            className="w-full p-2 border rounded"
+            required
+          >
+            <option value="">Select a time</option>
+            {availableTimeSlots.map((time) => (
+              <option key={time} value={time}>{time}</option>
+            ))}
+          </select>
+        </div>
 
         {/* Customer Information */}
         <div>
@@ -238,9 +222,14 @@ const BookingForm = () => {
 
         <div>
           <label className="block text-sm font-medium mb-2">Your Phone Number</label>
-          <PhoneInput
+          <input
+            type="tel"
             value={customerPhone}
-            onChange={setCustomerPhone}
+            onChange={(e) => setCustomerPhone(e.target.value)}
+            pattern="[0-9]{3}-[0-9]{3}-[0-9]{4}"
+            placeholder="123-456-7890"
+            className="w-full p-2 border rounded"
+            required
           />
         </div>
 

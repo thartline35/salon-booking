@@ -1,5 +1,15 @@
 import { format, parse, addMinutes, parseISO, isBefore } from "date-fns";
-import { collection, getDocs, query, where } from "firebase/firestore";
+import { db } from "../firebase";
+import {
+  collection,
+  getDocs,
+  getDoc,
+  query,
+  where,
+  addDoc,
+  updateDoc,
+  doc,
+} from "firebase/firestore";
 
 // Standard Business Hours (Salon-wide)
 export const BUSINESS_HOURS = {
@@ -17,151 +27,179 @@ export const STYLISTS = [
   { id: "heather", name: "Heather", phone: "2565577173" },
 ];
 
-// Utility function to parse time in 12-hour format (AM/PM)
-const parseTime = (timeStr) => {
-  const [time, period] = timeStr.split(" ");
-  const [hours, minutes] = time.split(":").map(Number);
-
-  // Adjust the hour based on AM/PM
-  if (period === "PM" && hours !== 12) {
-    return (hours + 12) * 60 + minutes; // Convert PM times to 24-hour format
-  }
-  if (period === "AM" && hours === 12) {
-    return minutes; // Midnight case: 12:00 AM is 00:00 in 24-hour format
-  }
-  return hours * 60 + minutes; // AM times and normal PM times (except 12 PM) are kept as is
-};
-
-// Generate time slots for a specific date and service duration
-export const generateTimeSlots = (date, serviceDuration) => {
-  const dayOfWeek = format(parseISO(date), "EEEE");
-  const hours = BUSINESS_HOURS[dayOfWeek];
-
-  if (!hours?.isOpen) return [];
-
-  const slots = [];
-  const startTime = parse(hours.start, "hh:mm a", parseISO(date));
-  const endTime = parse(hours.end, "hh:mm a", parseISO(date));
-
-  let currentTime = startTime;
-  while (isBefore(currentTime, endTime)) {
-    const slotEndTime = addMinutes(currentTime, serviceDuration);
-
-    // Ensure the entire service duration fits within business hours
-    if (isBefore(slotEndTime, endTime)) {
-      slots.push(format(currentTime, "hh:mm a"));
-    }
-
-    // Move to next slot (15-minute increments)
-    currentTime = addMinutes(currentTime, 15);
-  }
-
-  // Sort slots chronologically: AM first, then PM
-  return slots.sort((a, b) => parseTime(a) - parseTime(b));
-};
-
-// Generate available times for a selected date and service
-export const generateAvailableTimes = async (date, selectedService, db) => {
-  const dayOfWeek = format(parseISO(date), "EEEE");
-  const businessHours = BUSINESS_HOURS[dayOfWeek];
-
-  if (!businessHours?.isOpen) {
-    return {
-      availableTimes: [],
-      status: {
-        isOpen: false,
-        message: "Salon is closed on this day.",
-      },
-    };
-  }
-
+// Get all available time slots for a given date and service
+export const generateAvailableTimes = async (date, service, db) => {
   try {
-    // Fetch all appointments for the selected date
-    const appointmentsSnapshot = await getDocs(
-      query(collection(db, "appointments"), where("date", "==", date))
+    // Get already booked appointments
+    const appointmentQuery = query(
+      collection(db, "appointments"),
+      where("date", "==", date),
+      where("serviceId", "==", service.id)
     );
+    const querySnapshot = await getDocs(appointmentQuery);
+    const appointments = querySnapshot.docs.map((doc) => doc.data());
 
-    // Convert business hours to actual times
-    const startTime = parse(businessHours.start, "h:mm a", new Date());
-    const endTime = parse(businessHours.end, "h:mm a", new Date());
+    // Generate all possible time slots
+    const availableSlots = generateTimeSlots(service.duration, date);
 
-    // Get existing appointments
-    const existingAppointments = appointmentsSnapshot.docs.map((doc) =>
-      doc.data()
-    );
-
-    // Generate all possible time slots within business hours
-    const allSlots = [];
-    let currentTime = startTime;
-
-    while (isBefore(currentTime, endTime)) {
-      const timeSlot = format(currentTime, "h:mm a");
-
-      // Check if this slot is available
-      const isAvailable = !existingAppointments.some(
-        (apt) =>
-          apt.time === timeSlot && apt.duration >= selectedService.duration
-      );
-
-      if (isAvailable) {
-        allSlots.push(timeSlot);
-      }
-
-      // Move to next slot (15-minute increments)
-      currentTime = addMinutes(currentTime, 15);
-    }
-
-    // Sort slots chronologically (AM first, then PM)
-    const sortedSlots = allSlots.sort((a, b) => parseTime(a) - parseTime(b));
+    // Remove booked slots
+    const finalSlots = availableSlots.filter((slot) => {
+      return !appointments.some((appointment) => appointment.time === slot);
+    });
 
     return {
-      availableTimes: sortedSlots,
       status: {
         isOpen: true,
-        message: `Open from ${businessHours.start} to ${businessHours.end}`,
-        totalSlots: allSlots.length,
-        availableSlots: sortedSlots.length,
+        availableSlots: finalSlots.length,
+        totalSlots: availableSlots.length,
       },
+      availableTimes: finalSlots,
     };
   } catch (error) {
     console.error("Error generating available times:", error);
     return {
-      availableTimes: [],
-      status: {
-        isOpen: false,
-        message: "Error checking availability",
-      },
+      status: { isOpen: false, message: "Unable to check availability" },
     };
   }
 };
 
-// Add these at the end of the existing appointmentUtils.js file
-
-/**
- * Find service category by service ID
- * @param {Object} SERVICES - Services object from services.js
- * @param {string} serviceId - ID of the service to find
- * @returns {string|null} Category name or null if not found
- */
-export const findServiceCategory = (SERVICES, serviceId) => {
-  for (const category of Object.keys(SERVICES)) {
-    if (SERVICES[category].some((s) => s.id === serviceId)) {
-      return category;
-    }
-  }
-  return null;
+// Function to check if a specific day has availability
+export const checkDayAvailability = (date) => {
+  const dayOfWeek = new Date(date).toLocaleString("en-US", { weekday: "long" });
+  return BUSINESS_HOURS[dayOfWeek]?.isOpen || false;
 };
 
-/**
- * Find service details by ID across all service categories
- * @param {Object} SERVICES - Services object from services.js
- * @param {string} serviceId - ID of the service to find
- * @returns {Object|null} Service details or null if not found
- */
-export const findServiceDetails = (SERVICES, serviceId) => {
-  for (const category of Object.keys(SERVICES)) {
-    const service = SERVICES[category].find((s) => s.id === serviceId);
-    if (service) return service;
+// Function to get all appointments for a specific stylist
+export const getStylistAppointments = async (db, stylistId, date) => {
+  try {
+    const appointmentQuery = query(
+      collection(db, "appointments"),
+      where("stylistId", "==", stylistId),
+      where("date", "==", date)
+    );
+    const querySnapshot = await getDocs(appointmentQuery);
+    return querySnapshot.docs.map((doc) => doc.data());
+  } catch (error) {
+    console.error("Error fetching stylist appointments:", error);
+    return [];
   }
-  return null;
+};
+
+// Function to generate time slots
+export const generateTimeSlots = (duration, date) => {
+  // Debug logging
+  console.log("Generating time slots for:", { date, duration });
+
+  // Create Date object with timezone handling
+  const [year, month, day] = date.split("-").map(Number);
+  const selectedDate = new Date(year, month - 1, day); // month is 0-based in JavaScript
+  console.log("Selected date object:", selectedDate);
+
+  // Add this right after creating selectedDate
+  console.log("Date verification:", {
+    originalDate: date,
+    parsedDate: selectedDate,
+    year,
+    month,
+    day,
+    dayOfWeek: selectedDate.toLocaleString("en-US", { weekday: "long" }),
+    isValid: selectedDate instanceof Date && !isNaN(selectedDate),
+  });
+
+  const dayOfWeek = selectedDate.toLocaleString("en-US", { weekday: "long" });
+  console.log("Day of week:", dayOfWeek);
+
+  // Get business hours for the day
+  const hours = BUSINESS_HOURS[dayOfWeek];
+  console.log("Business hours:", hours);
+
+  if (!hours?.isOpen) {
+    console.log(`Closed on ${dayOfWeek}`);
+    return [];
+  }
+
+  const slots = [];
+
+  // Parse the start and end times
+  function parseTimeString(timeStr) {
+    const [time, period] = timeStr.split(" ");
+    const [hours, minutes] = time.split(":").map(Number);
+    let totalMinutes = hours * 60 + minutes;
+
+    if (period === "PM" && hours !== 12) {
+      totalMinutes += 12 * 60;
+    } else if (period === "AM" && hours === 12) {
+      totalMinutes = minutes;
+    }
+
+    return totalMinutes;
+  }
+
+  const startMinutes = parseTimeString(hours.start);
+  const endMinutes = parseTimeString(hours.end);
+
+  console.log("Time range:", {
+    start: hours.start,
+    end: hours.end,
+    startMinutes,
+    endMinutes,
+  });
+
+  // Generate slots in 15-minute increments
+  for (let time = startMinutes; time <= endMinutes - duration; time += 15) {
+    const hour = Math.floor(time / 60);
+    const minute = time % 60;
+
+    // Format time in 12-hour format
+    let displayHour = hour;
+    const period = hour >= 12 ? "PM" : "AM";
+
+    if (hour > 12) {
+      displayHour -= 12;
+    } else if (hour === 0) {
+      displayHour = 12;
+    }
+
+    const timeSlot = `${displayHour}:${minute
+      .toString()
+      .padStart(2, "0")} ${period}`;
+    slots.push(timeSlot);
+  }
+
+  console.log("Generated slots:", slots);
+  return slots;
+};
+
+// Function to update stylist availability
+export const updateStylistAvailability = async (stylistId, date, time, db) => {
+  try {
+    const stylistRef = doc(db, "stylists", stylistId);
+    const stylistDoc = await getDoc(stylistRef);
+
+    if (stylistDoc.exists()) {
+      const availability = stylistDoc.data().availability || {};
+      await updateDoc(stylistRef, {
+        availability: {
+          ...availability,
+          [date]: {
+            ...availability[date],
+            blockedTimes: [...(availability[date]?.blockedTimes || []), time],
+          },
+        },
+      });
+    }
+  } catch (error) {
+    console.error("Error updating stylist availability:", error);
+    throw error;
+  }
+};
+
+export default {
+  BUSINESS_HOURS,
+  STYLISTS,
+  generateAvailableTimes,
+  checkDayAvailability,
+  getStylistAppointments,
+  generateTimeSlots,
+  updateStylistAvailability,
 };
