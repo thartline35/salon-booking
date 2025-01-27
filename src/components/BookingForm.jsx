@@ -7,7 +7,7 @@ import {
   STYLISTS,
   generateTimeSlots,
   updateStylistAvailability,
-  checkDayAvailability,
+  parseTimeString,
 } from "../utils/appointmentUtils";
 
 const BookingForm = () => {
@@ -27,18 +27,34 @@ const BookingForm = () => {
   };
 
   // Auto-assign stylist based on availability
-  const findAvailableStylist = async (date, time) => {
+  const findAvailableStylist = async (date, time, duration) => {
+    // Convert requested time to minutes for comparison
+    const requestTimeMinutes = parseTimeString(time);
+  
     for (const stylist of STYLISTS) {
+      // Get all appointments for this stylist on this date
       const appointmentsRef = collection(db, "appointments");
       const q = query(
         appointmentsRef,
         where("stylistId", "==", stylist.id),
-        where("date", "==", date),
-        where("time", "==", time)
+        where("date", "==", date)
       );
       
       const querySnapshot = await getDocs(q);
-      if (querySnapshot.empty) {
+      const stylistAppointments = querySnapshot.docs.map(doc => doc.data());
+      
+      // Check if any existing appointments overlap with the requested time
+      const hasConflict = stylistAppointments.some(appointment => {
+        const appointmentStartMinutes = parseTimeString(appointment.time);
+        const appointmentEndMinutes = appointmentStartMinutes + appointment.duration;
+        const requestEndMinutes = requestTimeMinutes + duration;
+        
+        // Check if there's an overlap
+        return !(requestEndMinutes <= appointmentStartMinutes || 
+                 requestTimeMinutes >= appointmentEndMinutes);
+      });
+  
+      if (!hasConflict) {
         return stylist.id;
       }
     }
@@ -105,19 +121,22 @@ const BookingForm = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-
+  
     try {
-      // New code: Check for available stylist if none selected
       let finalStylistId = selectedStylist;
       if (!selectedStylist) {
-        const availableStylistId = await findAvailableStylist(selectedDate, selectedTime);
+        const availableStylistId = await findAvailableStylist(
+          selectedDate, 
+          selectedTime, 
+          selectedService.duration  // Pass the duration
+        );
         if (!availableStylistId) {
           alert("Sorry, no stylists are available at this time. Please select a different time.");
           return;
         }
         finalStylistId = availableStylistId;
       }
-      
+        
       const appointment = {
         stylistId: selectedStylist,
         serviceId: selectedService.id,

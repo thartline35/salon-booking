@@ -22,6 +22,20 @@ export const BUSINESS_HOURS = {
   Sunday: { isOpen: false },
 };
 
+export const parseTimeString = (timeStr) => {
+  const [time, period] = timeStr.split(" ");
+  const [hours, minutes] = time.split(":").map(Number);
+  let totalMinutes = hours * 60 + minutes;
+
+  if (period === "PM" && hours !== 12) {
+    totalMinutes += 12 * 60;
+  } else if (period === "AM" && hours === 12) {
+    totalMinutes = minutes;
+  }
+
+  return totalMinutes;
+};
+
 export const STYLISTS = [
   { id: "jennifer", name: "Jennifer", phone: "2566132308" },
   { id: "heather", name: "Heather", phone: "2565577173" },
