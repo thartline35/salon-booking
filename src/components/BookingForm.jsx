@@ -107,6 +107,17 @@ const BookingForm = () => {
     e.preventDefault();
 
     try {
+      // New code: Check for available stylist if none selected
+      let finalStylistId = selectedStylist;
+      if (!selectedStylist) {
+        const availableStylistId = await findAvailableStylist(selectedDate, selectedTime);
+        if (!availableStylistId) {
+          alert("Sorry, no stylists are available at this time. Please select a different time.");
+          return;
+        }
+        finalStylistId = availableStylistId;
+      }
+      
       const appointment = {
         stylistId: selectedStylist,
         serviceId: selectedService.id,
