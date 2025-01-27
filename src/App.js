@@ -2,18 +2,19 @@ import React from "react";
 import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
 import BookingForm from "./components/BookingForm";
 import StylistDashboard from "./components/StylistDashboard";
+import logo from "./logo.png";
 
 function App() {
   return (
     <Router>
-      <div className="min-h-screen bg-gray-50">
-        <nav className="bg-white shadow-sm">
-          <div className="max-w-7xl mx-auto px-4 py-3">
-            <div className="flex justify-between">
-              <h1 className="text-xl font-bold">Salon Booking</h1>
-            </div>
-          </div>
-        </nav>
+      <div className="bg-teal-200">
+        <header className="bg-pink-100">
+          <img
+            src={logo}
+            alt="Salon Logo"
+            className="mx-auto rounded-xl h-48 w-2/3"
+          />
+        </header>
 
         <main className="max-w-7xl mx-auto px-4 py-8">
           <Routes>

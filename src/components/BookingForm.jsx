@@ -7,6 +7,7 @@ import {
   STYLISTS,
   generateTimeSlots,
   updateStylistAvailability,
+  checkDayAvailability,
 } from "../utils/appointmentUtils";
 
 const BookingForm = () => {
@@ -87,18 +88,23 @@ const BookingForm = () => {
     assignStylist();
   }, [selectedTime, selectedDate]);
 
-  const validatePhoneNumber = (phone) => {
-    const numbersOnly = phone.replace(/\D/g, "");
-    return numbersOnly.length === 10;
+  const formatPhoneNumber = (e) => {
+    const input = e.target.value;
+    const numbersOnly = input.replace(/\D/g, "");
+    let formattedNumber = "";
+
+    for (let i = 0; i < numbersOnly.length; i++) {
+      if (i === 3 || i === 6) {
+        formattedNumber += "-";
+      }
+      formattedNumber += numbersOnly[i];
+    }
+
+    setCustomerPhone(formattedNumber);
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-
-    if (!validatePhoneNumber(customerPhone)) {
-      alert("Please enter a valid 10-digit phone number");
-      return;
-    }
 
     try {
       const appointment = {
@@ -109,7 +115,7 @@ const BookingForm = () => {
         date: selectedDate,
         time: selectedTime,
         customerName,
-        customerPhone: customerPhone.replace(/\D/g, ""),
+        customerPhone: customerPhone.replace(/-/g, ""),
         status: "scheduled",
         createdAt: new Date(),
       };
@@ -169,7 +175,7 @@ const BookingForm = () => {
 
         {/* Display Selected Service Details */}
         {selectedService && (
-          <div className="bg-gray-50 p-4 rounded">
+          <div className="bg-purple-200 p-4 rounded">
             <p className="font-medium">Selected: {selectedService.name}</p>
             <p>Duration: {selectedService.duration} minutes</p>
             <p>Price: ${selectedService.price}{selectedService.variablePricing ? '+' : ''}</p>
@@ -194,19 +200,19 @@ const BookingForm = () => {
 
         {/* Time Selection */}
         <div>
-          <label className="block text-sm font-medium mb-2">Choose Time</label>
-          <select
-            value={selectedTime}
-            onChange={(e) => setSelectedTime(e.target.value)}
-            className="w-full p-2 border rounded"
-            required
-          >
-            <option value="">Select a time</option>
-            {availableTimeSlots.map((time) => (
-              <option key={time} value={time}>{time}</option>
-            ))}
-          </select>
-        </div>
+  <label className="block text-sm font-medium mb-2">Choose Time</label>
+  <select
+    value={selectedTime}
+    onChange={(e) => setSelectedTime(e.target.value)}
+    className="w-full p-2 border rounded"
+    required
+  >
+    <option value="">Select a time</option>
+    {availableTimeSlots.map((time) => (
+      <option key={time} value={time}>{time}</option>
+    ))}
+  </select>
+</div>
 
         {/* Customer Information */}
         <div>

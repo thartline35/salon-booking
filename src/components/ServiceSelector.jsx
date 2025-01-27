@@ -7,14 +7,14 @@ const ServiceSelector = ({ onServiceSelect }) => {
   return (
     <div className="space-y-6">
       {categories.map(category => (
-        <div key={category} className="border rounded-lg p-4">
+        <div key={category} className="border rounded-lg p-4 bg-blue-300">
           <h3 className="font-bold text-lg mb-3 capitalize">{category}</h3>
           <div className="grid gap-2">
             {SERVICES[category].map(service => (
               <button
                 key={service.id}
                 onClick={() => onServiceSelect(service)}
-                className="text-left p-3 hover:bg-gray-50 rounded border"
+                className="text-left p-3 bg-purple-200 hover:bg-purple-300 rounded border"
               >
                 <div className="flex justify-between items-start">
                   <div>
@@ -42,3 +42,4 @@ const ServiceSelector = ({ onServiceSelect }) => {
 };
 
 export default ServiceSelector;
+   
